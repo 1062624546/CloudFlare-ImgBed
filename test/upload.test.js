@@ -273,7 +273,7 @@ describe('upload', () => {
         const route = await loadFunction('functions/upload/index.js', mocks);
         const form = new FormData();
         form.set('file', new File([new Uint8Array(18 * 1024 * 1024)], 'movie.mp4', { type: 'video/mp4' }));
-        const response = await route.onRequest(context('https://test/upload?uploadChannel=telegram&autoRetry=false', form));
+        const response = await route.onRequest(context('https://test/upload?uploadChannel=telegram&autoRetry=true&serverCompress=false', form));
         assert.equal(response.status, 200, await response.clone().text());
         assert.equal(storage.method, 'sendVideo');
         assert.equal(storage.fileName, 'movie.mp4');
@@ -324,7 +324,7 @@ describe('upload', () => {
         const route = await loadFunction('functions/upload/index.js', mocks);
         const form = new FormData();
         form.set('file', new File([new Uint8Array(50 * 1024 * 1024)], 'too-large.mp4', { type: 'video/mp4' }));
-        const response = await route.onRequest(context('https://test/upload?uploadChannel=telegram&autoRetry=false', form));
+        const response = await route.onRequest(context('https://test/upload?uploadChannel=telegram&autoRetry=true', form));
         assert.equal(response.status, 413);
         assert.match(await response.text(), /Local Bot API Server/);
         assert.equal(storage.method, undefined);
