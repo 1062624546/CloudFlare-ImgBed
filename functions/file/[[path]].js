@@ -193,6 +193,13 @@ async function serveFileContent(context, db, imgRecord, fileId, encodedFileName,
         }
     }
 
+    // 视频超过 Telegram 官方 getFile 20 MiB 限制时，优先使用上传时保存的
+    // R2 镜像。R2 的 Range 响应能让浏览器正常拖动视频进度条。
+    if (imgRecord.metadata?.Channel === 'TelegramNew' && imgRecord.metadata?.TgMirrorR2 === true) {
+        const response = await handleR2File(context, fileId, encodedFileName, fileType);
+        return await transformImageResponse(context, response);
+    }
+
     /* Telegram及Telegraph渠道 */
 
     // 构建目标 URL

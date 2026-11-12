@@ -144,10 +144,13 @@ export async function onRequest(context) {
 // 按渠道删除存储中的文件对象，不处理数据库记录；返回 false 表示渠道删除失败
 // 有效期清理先删除存储、再按条件删除记录，并据返回值决定是否保留记录重试，因此单独导出
 export async function deleteStoredFile(env, fileId, img) {
-    // 如果是R2渠道的图片，需要删除R2中对应的图片
-    if (img.metadata?.Channel === 'CloudflareR2') {
-        const R2DataBase = env.img_r2;
-        await R2DataBase.delete(fileId);
+    // 原生 R2 文件及 Telegram 大视频的 R2 预览镜像都必须清理，
+    // 否则删除文件记录后会留下仍在计费的 R2 对象。
+    if (img.metadata?.Channel === 'CloudflareR2' || img.metadata?.TgMirrorR2 === true) {
+        if (!env.img_r2) {
+            throw new Error('R2 binding unavailable while deleting stored file');
+        }
+        await env.img_r2.delete(fileId);
     }
 
     // S3 渠道的图片，需要删除S3中对应的图片

@@ -282,7 +282,9 @@ async function processFileUpload(context, formdata = null) {
     } else {
         // ----------------Telegram New 渠道-------------------
         const res = await uploadFileToTelegram(context, fullId, metadata, fileExt, fileName, fileType, returnLink);
-        if (res.status === 200 || !autoRetry) {
+        // 用户选择 Telegram 上传视频时，禁止自动降级到其他存储渠道：
+        // 否则页面可能提示成功，但 Telegram 群根本没有完整视频。
+        if (res.status === 200 || !autoRetry || normalizeMimeType(fileType).startsWith('video/')) {
             return res;
         } else {
             err = await res.text();
@@ -481,11 +483,21 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     const telegramAPI = new TelegramAPI(tgBotToken, tgProxyUrl);
 
-    // 16MB 分片阈值 (TG Bot getFile download limit: 20MB, leave 4MB safety margin)
-    const CHUNK_SIZE = 16 * 1024 * 1024; // 16MB
+    // 普通文件仍沿用 16 MiB 分片，保证 Telegram 官方 getFile 能逐片取回。
+    // 视频必须以单个 Telegram 消息发送才能在群组原生播放；超过官方 Bot API
+    // 50 MB 的视频不能自动分片伪装成可播放视频，应显式告知需要 Local Bot API。
+    const CHUNK_SIZE = 16 * 1024 * 1024;
+    const TG_DIRECT_VIDEO_MAX_SIZE = 49 * 1024 * 1024; // 为 Telegram 50 MB 限制保留余量
+    const isVideoUpload = normalizeMimeType(fileType).startsWith('video/');
 
-    if (fileSize > CHUNK_SIZE) {
-        // 大文件分片上传
+    if (isVideoUpload && fileSize > TG_DIRECT_VIDEO_MAX_SIZE) {
+        return createResponse(
+            'Telegram 视频超过 49 MiB，官方 Bot API 无法以单条可播放消息上传。请使用 Local Bot API Server 或改用 R2/S3 存储；不会将视频拆成群里的 .part 文件。',
+            { status: 413 }
+        );
+    }
+
+    if (!isVideoUpload && fileSize > CHUNK_SIZE) {
         return await uploadLargeFileToTelegram(context, file, fullId, metadata, fileName, fileType, returnLink, tgBotToken, tgChatId, tgChannel);
     }
 
@@ -522,7 +534,8 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     }
 
     // 根据服务端压缩设置处理接口：从参数中获取serverCompress，如果为false，则使用sendDocument接口
-    if (url.searchParams.get('serverCompress') === 'false') {
+    // 视频即便关闭压缩，也必须作为 sendVideo 发送，才能在 Telegram 群内播放。
+    if (url.searchParams.get('serverCompress') === 'false' && !isVideoUpload) {
         sendFunction = { 'url': 'sendDocument', 'type': 'document' };
     }
 
@@ -531,19 +544,45 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     try {
         const response = await telegramAPI.sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type);
         const fileInfo = telegramAPI.getFileInfo(response);
-        const filePath = await telegramAPI.getFilePath(fileInfo.file_id);
+        if (!fileInfo?.file_id) {
+            throw new Error('Telegram did not return a usable file_id');
+        }
         const id = fileInfo.file_id;
-        // 更新FileSize
-        metadata.FileSize = (fileInfo.file_size / 1024 / 1024).toFixed(2);
+        // 官方 getFile 的下载限制为 20 MiB；大视频仍可完整发到群组，
+        // 但后台预览必须使用本地 Bot API 或 R2 镜像，不能依赖 getFile。
+        const needsLargeVideoMirror = isVideoUpload && fileSize > 20 * 1024 * 1024;
+        const filePath = needsLargeVideoMirror && !tgProxyUrl
+            ? null
+            : await telegramAPI.getFilePath(id);
+        metadata.FileSize = ((fileInfo.file_size || fileSize) / 1024 / 1024).toFixed(2);
+        metadata.TgMessageId = response.result?.message_id || null;
+
+        // 如果绑定了 R2，将大视频镜像到 R2 以支持浏览器 Range 请求、拖动进度和预览。
+        // 不改变渠道字段，仍归属 Telegram；镜像存在时由 /file 端优先读取 R2。
+        if (needsLargeVideoMirror && env.img_r2) {
+            try {
+                await env.img_r2.put(fullId, file, {
+                    httpMetadata: { contentType: fileType },
+                });
+                metadata.TgMirrorR2 = true;
+            } catch (mirrorError) {
+                console.error('Telegram video R2 mirror failed:', mirrorError.message);
+            }
+        }
+        if (needsLargeVideoMirror && !metadata.TgMirrorR2 && !tgProxyUrl) {
+            metadata.TgPreviewUnavailable = true;
+        }
 
         // 将响应返回给客户端
         res = buildUploadResponse(context, returnLink);
 
 
         // 图像审查（使用代理域名或官方域名）
-        const moderateDomain = tgProxyUrl ? `https://${tgProxyUrl}` : 'https://api.telegram.org';
-        const moderateUrl = `${moderateDomain}/file/bot${tgBotToken}/${filePath}`;
-        metadata.Label = await moderateContent(env, moderateUrl);
+        if (filePath) {
+            const moderateDomain = tgProxyUrl ? `https://${tgProxyUrl}` : 'https://api.telegram.org';
+            const moderateUrl = `${moderateDomain}/file/bot${tgBotToken}/${filePath}`;
+            metadata.Label = await moderateContent(env, moderateUrl);
+        }
 
         // 更新metadata，写入KV数据库
         try {
