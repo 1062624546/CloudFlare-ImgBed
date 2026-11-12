@@ -282,7 +282,9 @@ async function processFileUpload(context, formdata = null) {
     } else {
         // ----------------Telegram New 渠道-------------------
         const res = await uploadFileToTelegram(context, fullId, metadata, fileExt, fileName, fileType, returnLink);
-        if (res.status === 200 || !autoRetry) {
+        // 用户选择 Telegram 上传视频时，禁止自动降级到其他存储渠道：
+        // 否则页面可能提示成功，但 Telegram 群根本没有完整视频。
+        if (res.status === 200 || !autoRetry || normalizeMimeType(fileType).startsWith('video/')) {
             return res;
         } else {
             err = await res.text();
@@ -532,7 +534,8 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     }
 
     // 根据服务端压缩设置处理接口：从参数中获取serverCompress，如果为false，则使用sendDocument接口
-    if (url.searchParams.get('serverCompress') === 'false') {
+    // 视频即便关闭压缩，也必须作为 sendVideo 发送，才能在 Telegram 群内播放。
+    if (url.searchParams.get('serverCompress') === 'false' && !isVideoUpload) {
         sendFunction = { 'url': 'sendDocument', 'type': 'document' };
     }
 
