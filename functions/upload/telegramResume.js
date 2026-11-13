@@ -30,6 +30,7 @@ export async function handleTelegramResume(context, action) {
         return json({ error: 'Invalid request method' }, 405);
     }
 
+    let stage = action;
     try {
         if (action === 'init') {
             const form = await request.formData();
@@ -97,6 +98,7 @@ export async function handleTelegramResume(context, action) {
             if (length && length !== expectedSize) return json({ error: 'Invalid chunk size' }, 400);
             const reader = request.body?.getReader();
             if (!reader) return json({ error: 'Missing chunk body' }, 400);
+            stage = 'readChunk';
             const data = new Uint8Array(expectedSize);
             let offset = 0;
             while (true) {
@@ -113,6 +115,7 @@ export async function handleTelegramResume(context, action) {
 
             const fileName = session.fileName + '.part' + String(index).padStart(3, '0');
             const api = new TelegramAPI(channel.botToken, channel.proxyUrl);
+            stage = 'sendDocument';
             const response = await api.sendFile(new Blob([data]), channel.chatId, 'sendDocument', 'document',
                 `Part ${index + 1}/${session.totalChunks}`, fileName, { signal: AbortSignal.timeout(120000) });
             if (!response.ok) {
@@ -125,6 +128,7 @@ export async function handleTelegramResume(context, action) {
                 return json({ error: 'Telegram returned an invalid chunk' }, 502);
             }
             const record = { index, fileId: part.file_id, size: expectedSize };
+            stage = 'saveChunk';
             await db.put(partKey, JSON.stringify(record), { expirationTtl: TTL, metadata: record });
             return json({ index });
         }
@@ -169,7 +173,8 @@ export async function handleTelegramResume(context, action) {
         return createUploadResponse(context, [result]);
     } catch (error) {
         console.warn('Telegram resumable upload failed:', error.name);
-        return json({ error: 'Telegram upload request failed. The session can be retried.' }, 502);
+        const reason = error.name === 'TimeoutError' || error.name === 'AbortError' ? 'timeout' : 'requestFailed';
+        return json({ error: 'Telegram upload request failed. The session can be retried.', stage, reason }, 502);
     }
 }
 
