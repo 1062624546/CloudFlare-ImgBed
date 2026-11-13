@@ -24,21 +24,27 @@ export class TelegramAPI {
 
     async webhook(method, parameters = {}) {
         const readOnly = method === 'getWebhookInfo';
+        // Use the same Bot API transport as media uploads.
+        const formData = new FormData();
+        for (const [key, value] of Object.entries(parameters)) {
+            formData.append(key, typeof value === 'string' ? value : JSON.stringify(value));
+        }
         const options = {
-            method: readOnly ? 'GET' : 'POST',
-            redirect: 'error',
+            method: 'POST',
+            headers: this.defaultHeaders,
+            body: formData,
+            redirect: 'manual',
             signal: AbortSignal.timeout(15000)
         };
-        if (!readOnly) {
-            options.headers = { 'Content-Type': 'application/json' };
-            options.body = JSON.stringify(parameters);
-        }
 
         let response;
         try {
             response = await fetch(`${this.baseURL}/${method}`, options);
         } catch (error) {
             throw new TelegramWebhookError(error.name === 'TimeoutError' ? 'timeout' : 'connectionFailed');
+        }
+        if (response.status >= 300 && response.status < 400) {
+            throw new TelegramWebhookError('unexpectedRedirect', response.status);
         }
         const data = await response.json().catch(() => null);
         if (!response.ok || !data?.ok) {
