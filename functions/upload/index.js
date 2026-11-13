@@ -8,6 +8,7 @@ import {
 } from "./uploadTools";
 import { getFileTypeCategory, normalizeMimeType, resolveFileType } from "../utils/mimeTypes.js";
 import { initializeChunkedUpload, handleChunkUpload, uploadLargeFileToTelegram, handleCleanupRequest } from "./chunkUpload";
+import { handleTelegramResume } from "./telegramResume.js";
 import { handleChunkMerge } from "./chunkMerge";
 import { TelegramAPI } from "../utils/storage/telegramAPI";
 import { DiscordAPI } from "../utils/storage/discordAPI";
@@ -44,6 +45,16 @@ export async function onRequest(context) {  // Contents of context object
     const isBlockedIp = await isBlockedUploadIp(env, uploadIp);
     if (isBlockedIp) {
         return createResponse('Error: Your IP is blocked', { status: 403 });
+    }
+
+    const resumeAction = url.searchParams.get('telegramResume');
+    if (resumeAction !== null) {
+        if (resumeAction === 'init' && request.method === 'POST') {
+            const expiry = await resolveUploadExpiry(context);
+            if (expiry.error) return createResponse(expiry.error, { status: 400 });
+            context.fileExpiresAt = expiry.expiresAt;
+        }
+        return await handleTelegramResume(context, resumeAction);
     }
 
     // 检查是否为清理请求

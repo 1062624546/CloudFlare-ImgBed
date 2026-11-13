@@ -372,83 +372,64 @@ async function handleTelegramChunkedFile(context, imgRecord, encodedFileName, fi
         });
     }
 
-    // 检查Range请求头
-    const range = request.headers.get('Range');
-    let rangeStart = 0;
-    let rangeEnd = totalSize - 1;
-    let isRangeRequest = false;
-
-    if (range) {
-        const matches = range.match(/bytes=(\d+)-(\d*)/);
-        if (matches) {
-            rangeStart = parseInt(matches[1]);
-            rangeEnd = matches[2] ? parseInt(matches[2]) : totalSize - 1;
-            isRangeRequest = true;
-
-            // 验证范围有效性
-            if (rangeStart >= totalSize || rangeEnd >= totalSize || rangeStart > rangeEnd) {
-                return new Response('Range Not Satisfiable', { status: 416 });
-            }
-        }
-    }
-
-    // 处理HEAD请求
     if (request.method === 'HEAD') {
         return handleHeadRequest(headers, etag);
     }
 
+    const range = request.headers.get('Range');
+    let rangeStart = 0;
+    let rangeEnd = totalSize - 1;
+    if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (match && match[1]) {
+            rangeStart = Number(match[1]);
+            if (match[2]) rangeEnd = Math.min(Number(match[2]), rangeEnd);
+        } else if (match && Number(match[2]) > 0) {
+            rangeStart = Math.max(0, totalSize - Number(match[2]));
+        } else {
+            rangeStart = totalSize;
+        }
+        if (rangeStart >= totalSize || rangeStart > rangeEnd) {
+            return new Response('Range Not Satisfiable', {
+                status: 416, headers: { 'Content-Range': `bytes */${totalSize}` }
+            });
+        }
+        // Limit ranged playback to a small number of Telegram subrequests per response.
+        rangeEnd = Math.min(rangeEnd, rangeStart + 16 * 1024 * 1024 - 1);
+    }
+
     try {
-        // 创建支持Range请求的流
+        let position = 0;
+        let index = 0;
+        while (index < chunks.length && position + chunks[index].size <= rangeStart) {
+            position += chunks[index++].size;
+        }
+
+        const abort = new AbortController();
         const stream = new ReadableStream({
-            async start(controller) {
-                try {
-                    let currentPosition = 0;
-
-                    for (let i = 0; i < chunks.length; i++) {
-                        const chunk = chunks[i];
-                        const chunkSize = chunk.size || 0;
-
-                        // 如果当前分片完全在请求范围之前，跳过
-                        if (currentPosition + chunkSize <= rangeStart) {
-                            currentPosition += chunkSize;
-                            continue;
-                        }
-
-                        // 如果当前分片完全在请求范围之后，结束
-                        if (currentPosition > rangeEnd) {
-                            break;
-                        }
-
-                        // 获取分片数据（支持代理域名）
-                        const chunkData = await fetchTelegramChunkWithRetry(TgBotToken, chunk, TgProxyUrl, 3);
-                        if (!chunkData) {
-                            throw new Error(`Failed to fetch chunk ${chunk.index} after retries`);
-                        }
-
-                        // 计算在当前分片中的起始和结束位置
-                        const chunkStart = Math.max(0, rangeStart - currentPosition);
-                        const chunkEnd = Math.min(chunkSize, rangeEnd - currentPosition + 1);
-
-                        // 如果需要部分分片数据
-                        if (chunkStart > 0 || chunkEnd < chunkSize) {
-                            const partialData = chunkData.slice(chunkStart, chunkEnd);
-                            controller.enqueue(partialData);
-                        } else {
-                            controller.enqueue(chunkData);
-                        }
-
-                        currentPosition += chunkSize;
-                    }
-
+            async pull(controller) {
+                if (position > rangeEnd || index === chunks.length) {
                     controller.close();
-                } catch (error) {
-                    controller.error(error);
+                    return;
                 }
+
+                const chunk = chunks[index++];
+                const data = await fetchTelegramChunkWithRetry(TgBotToken, chunk, TgProxyUrl, 3, abort.signal);
+                if (abort.signal.aborted) return;
+                if (!data) throw new Error(`Failed to fetch chunk ${chunk.index}`);
+
+                const start = Math.max(0, rangeStart - position);
+                const end = Math.min(chunk.size, rangeEnd - position + 1);
+                controller.enqueue(data.subarray(start, end));
+                position += chunk.size;
+            },
+            cancel() {
+                abort.abort();
             }
-        });
+        }, { highWaterMark: 0 });
 
         // 设置Range相关头部
-        if (isRangeRequest) {
+        if (range) {
             setRangeHeaders(headers, rangeStart, rangeEnd, totalSize);
 
             return new Response(stream, {
@@ -470,12 +451,12 @@ async function handleTelegramChunkedFile(context, imgRecord, encodedFileName, fi
 }
 
 // 带重试机制的Telegram分片获取函数（支持代理域名）
-async function fetchTelegramChunkWithRetry(botToken, chunk, proxyUrl = '', maxRetries = 3) {
+async function fetchTelegramChunkWithRetry(botToken, chunk, proxyUrl = '', maxRetries = 3, signal) {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
             const tgApi = new TelegramAPI(botToken, proxyUrl);
 
-            const response = await tgApi.getFileContent(chunk.fileId);
+            const response = await tgApi.getFileContent(chunk.fileId, { signal });
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -487,12 +468,13 @@ async function fetchTelegramChunkWithRetry(botToken, chunk, proxyUrl = '', maxRe
 
             // 如果有期望大小且不匹配，抛出错误
             if (chunk.size && actualSize !== chunk.size) {
-                console.warn(`Chunk ${chunk.index} size mismatch: expected ${chunk.size}, got ${actualSize}`);
+                throw new Error(`Chunk ${chunk.index} size mismatch`);
             }
 
             return new Uint8Array(chunkData);
 
         } catch (error) {
+            if (signal?.aborted) return null;
             console.warn(`Chunk ${chunk.index} fetch attempt ${attempt + 1} failed:`, error.message);
 
             if (attempt === maxRetries - 1) {
