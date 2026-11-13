@@ -1,0 +1,200 @@
+diff --git a/src/components/config/SysCogUpload.vue b/src/components/config/SysCogUpload.vue
+index 3767e76..b59313b 100644
+--- a/src/components/config/SysCogUpload.vue
++++ b/src/components/config/SysCogUpload.vue
+@@ -146,7 +146,7 @@
+         <div v-if="savedTelegramMaxFileMiB !== null" class="channel-section">
+             <el-form label-position="top">
+                 <el-form-item :label="$t('sysUpload.telegramMaxFileSize')">
+-                    <el-input-number v-model="telegramMaxFileMiB" :min="1" :max="4096" :precision="0" />
++                    <el-input-number v-model="telegramMaxFileMiB" :min="0" :max="8589934591" :precision="0" />
+                     <span class="field-hint">{{ $t('sysUpload.telegramMaxFileSizeHint') }}</span>
+                 </el-form-item>
+             </el-form>
+@@ -646,7 +646,7 @@ components: {
+ },
+ data() {
+     return {
+-    telegramMaxFileMiB: 2048,
++    telegramMaxFileMiB: 0,
+     savedTelegramMaxFileMiB: null,
+     uploadRuleStates: { fileFormat: {}, fileExpiry: {} },
+     savingUploadRules: false,
+@@ -1331,7 +1331,7 @@ mounted() {
+     .then((response) => response.json())
+     .then((data) => {
+         this.telegramSettings = data.telegram;
+-        this.telegramMaxFileMiB = this.savedTelegramMaxFileMiB = data.telegramMaxFileMiB ?? 2048;
++        this.telegramMaxFileMiB = this.savedTelegramMaxFileMiB = data.telegramMaxFileMiB ?? 0;
+         // 确保 R2 渠道有 quota 默认值
+         if (data.cfr2 && data.cfr2.channels) {
+             data.cfr2.channels = data.cfr2.channels.map(channel => ({
+diff --git a/src/components/upload/UploadForm.vue b/src/components/upload/UploadForm.vue
+index 11651b4..85447ba 100644
+--- a/src/components/upload/UploadForm.vue
++++ b/src/components/upload/UploadForm.vue
+@@ -122,6 +122,14 @@
+                         </el-text>
+                         <div class="upload-list-dashboard-action">
+                             <div class="modern-action-group">
++                                <el-dropdown v-if="uploadChannel === 'telegram'" trigger="click" @command="telegramConcurrency = $event">
++                                    <el-button size="small">{{ $t('uploadForm.telegramConcurrency', { count: telegramConcurrency }) }}</el-button>
++                                    <template #dropdown>
++                                        <el-dropdown-menu>
++                                            <el-dropdown-item v-for="count in 6" :key="count" :command="count" :disabled="count === telegramConcurrency">{{ count }}</el-dropdown-item>
++                                        </el-dropdown-menu>
++                                    </template>
++                                </el-dropdown>
+                                 <el-tooltip :disabled="disableTooltip" :content="$t('upload.copyAll')" placement="top" :show-after="1000">
+                                     <el-dropdown trigger="hover" @command="copyAll">
+                                         <button
+@@ -317,6 +325,7 @@ data() {
+     return {
+         fileList: [],
+         uploading: false,
++        telegramConcurrency: 2,
+         maxUploading: 6,
+         exceptionList: [],
+         listScrolled: false,
+@@ -719,7 +728,8 @@ methods: {
+                 const response = await uploadResumableTelegramFile(
+                     '/upload?' + params.toString() + expireQuery(this.expire),
+                     file.file, abortController.signal,
+-                    percent => file.onProgress({ percent, file: file.file })
++                    percent => file.onProgress({ percent, file: file.file }),
++                    () => this.telegramConcurrency
+                 )
+                 file.onSuccess(response, file.file)
+                 return
+@@ -1077,8 +1087,8 @@ methods: {
+             
+             // 动图保留原文件；静态图片超过阈值时按设置压缩。
+             const needCustomCompress = !preserveAnimation && getFileTypeCategory(processedFile.type) === 'image' && this.customerCompress && processedFile.size / 1024 / 1024 > this.compressBar
+-            const limit = this.userConfig?.telegramMaxFileMiB ?? 2048
+-            const isLtLim = processedFile.size <= limit * 1024 * 1024 || this.uploadChannel !== 'telegram'
++            const limit = this.userConfig?.telegramMaxFileMiB ?? 0
++            const isLtLim = !limit || processedFile.size <= limit * 1024 * 1024 || this.uploadChannel !== 'telegram'
+ 
+             const pushFileToQueue = (file, serverCompress) => {
+                 const fileUrl = URL.createObjectURL(file)
+@@ -1108,7 +1118,7 @@ methods: {
+                 //尝试压缩图片
+                 imageConversion.compressAccurately(processedFile, 1024 * this.compressQuality).then((res) => {
+                     // Telegram 使用后台配置的整文件大小上限。
+-                    if (res.size > limit * 1024 * 1024 && this.uploadChannel === 'telegram') {
++                    if (limit && res.size > limit * 1024 * 1024 && this.uploadChannel === 'telegram') {
+                         this.$message.error(this.$t('uploadForm.telegramFileTooLarge', { name: processedFile.name, limit }))
+                         return reject(this.$t('uploadForm.fileSizeTooLarge'))
+                     }
+diff --git a/src/locales/en.json b/src/locales/en.json
+index 1bba868..c486b53 100644
+--- a/src/locales/en.json
++++ b/src/locales/en.json
+@@ -80,6 +80,7 @@
+     "uploadSuccess": "{name} uploaded successfully",
+     "uploadFailed": "{name} upload failed",
+     "compressFailedCannotUpload": "{name} compression failed, cannot upload!",
++    "telegramConcurrency": "Concurrent uploads {count}",
+     "telegramFileTooLarge": "{name} exceeds the Telegram limit of {limit} MiB.",
+     "fileTooLarge": "{name} file too large, cannot upload!",
+     "compressedFileTooLarge": "{name} still too large after compression, cannot upload!",
+@@ -580,7 +581,7 @@
+   },
+   "sysUpload": {
+     "telegramMaxFileSize": "Telegram file size limit (MiB)",
+-    "telegramMaxFileSizeHint": "Applies to the entire file. Choose 1–4096 MiB.",
++    "telegramMaxFileSizeHint": "Set to 0 for no whole-file limit.",
+     "telegramMaxFileSizeSaveError": "Unable to save Telegram upload limit.",
+ 
+     "forwardSync": {
+diff --git a/src/locales/zh-CN.json b/src/locales/zh-CN.json
+index 3b732dd..6265f44 100644
+--- a/src/locales/zh-CN.json
++++ b/src/locales/zh-CN.json
+@@ -81,6 +81,7 @@
+     "uploadSuccess": "{name}上传成功",
+     "uploadFailed": "{name}上传失败",
+     "compressFailedCannotUpload": "{name}压缩失败，无法上传!",
++    "telegramConcurrency": "并发上传 {count}",
+     "telegramFileTooLarge": "{name} 超过 Telegram 单文件上限 {limit} MiB。",
+     "fileTooLarge": "{name}文件过大，无法上传!",
+     "compressedFileTooLarge": "{name}压缩后文件过大，无法上传!",
+@@ -586,7 +587,7 @@
+ ,
+   "sysUpload": {
+     "telegramMaxFileSize": "Telegram 单文件上传上限（MiB）",
+-    "telegramMaxFileSizeHint": "可设置 1–4096 MiB，适用于整个文件。",
++    "telegramMaxFileSizeHint": "设为 0 时不限制整文件大小。",
+     "telegramMaxFileSizeSaveError": "保存 Telegram 上传上限失败。",
+ 
+     "forwardSync": {
+diff --git a/src/utils/upload/telegramResume.js b/src/utils/upload/telegramResume.js
+index a77296b..602072f 100644
+--- a/src/utils/upload/telegramResume.js
++++ b/src/utils/upload/telegramResume.js
+@@ -1,7 +1,7 @@
+ import axios from '@/utils/axios'
+ import { computeSha256 } from './sha256'
+ 
+-const PART_CONCURRENCY = 2
++const fingerprints = new WeakMap()
+ 
+ function uploadRequest(url, action, signal, data, id, index) {
+     const endpoint = new URL(url, window.location.origin)
+@@ -32,8 +32,12 @@ async function uploadPart(url, signal, data, id, index) {
+     }
+ }
+ 
+-export async function uploadResumableTelegramFile(url, file, signal, onProgress) {
+-    const fingerprint = await computeSha256(file)
++export async function uploadResumableTelegramFile(url, file, signal, onProgress, getConcurrency = () => 2) {
++    let fingerprint = fingerprints.get(file)
++    if (!fingerprint) {
++        fingerprint = await computeSha256(file)
++        fingerprints.set(file, fingerprint)
++    }
+     signal.throwIfAborted()
+     const key = 'telegramResume:' + JSON.stringify([url, file.name, file.size, file.type, fingerprint])
+     const saved = JSON.parse(localStorage.getItem(key) || 'null')
+@@ -71,22 +75,28 @@ export async function uploadResumableTelegramFile(url, file, signal, onProgress)
+         .filter(index => !completed.has(index))
+     let next = 0
+     let failure
+-    async function uploadPendingParts() {
+-        while (!failure && next < pending.length) {
+-            const index = pending[next++]
+-            const start = index * chunkSize
+-            try {
+-                signal.throwIfAborted()
+-                await uploadPart(url, signal, file.slice(start, start + sizeOf(index), 'application/octet-stream'), id, index)
+-                confirmed += sizeOf(index)
+-                report()
+-            } catch (error) {
+-                failure ??= error
+-            }
++    const active = new Set()
++    const sendPart = async index => {
++        const start = index * chunkSize
++        try {
++            signal.throwIfAborted()
++            const part = file.slice(start, start + sizeOf(index), 'application/octet-stream')
++            await uploadPart(url, signal, part, id, index)
++            confirmed += sizeOf(index)
++            report()
++        } catch (error) {
++            failure ??= error
+         }
+     }
+ 
+-    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, pending.length) }, uploadPendingParts))
++    while (active.size || (!failure && next < pending.length)) {
++        const concurrency = Math.min(6, Math.max(1, Math.trunc(getConcurrency()) || 2))
++        while (!failure && active.size < concurrency && next < pending.length) {
++            const task = sendPart(pending[next++]).finally(() => active.delete(task))
++            active.add(task)
++        }
++        if (active.size) await Promise.race(active)
++    }
+     if (failure) throw failure
+ 
+     const response = await uploadRequest(url, 'complete', signal, undefined, id)

@@ -4,6 +4,12 @@ import { loadFunction, memoryDatabase } from './helpers/loadFunction.js';
 describe('Telegram resumable upload', () => {
     it('keeps confirmed chunks after a failure and finalizes a single stable file', async () => {
         const db = memoryDatabase();
+        const list = db.list.bind(db);
+        db.list = async ({ prefix, cursor }) => {
+            const { keys } = await list({ prefix });
+            const page = keys.filter(key => !cursor || key.name > cursor);
+            return { keys: page.slice(0, 1), list_complete: page.length <= 1, cursor: page[0]?.name };
+        };
         const chunkSize = 16 * 1024 * 1024;
         const fingerprint = 'a'.repeat(64);
         let fail = false;
@@ -61,6 +67,14 @@ describe('Telegram resumable upload', () => {
 
         fail = false;
         assert.equal((await call('part', new Uint8Array(1), query + '&index=1')).status, 200);
+        const large = new FormData();
+        large.set('originalFileName', 'large.mp4');
+        large.set('size', String(5 * 1024 ** 3));
+        large.set('fingerprint', fingerprint);
+        const largeInit = await call('init', large);
+        assert.equal(largeInit.status, 200);
+        assert.equal((await largeInit.json()).totalChunks, 320);
+
         const completed = await (await call('complete', undefined, query)).json();
         assert.deepEqual(completed, [{ src: '/file/media/clip.mp4' }]);
         assert.deepEqual(await (await call('complete', undefined, query)).json(), completed);

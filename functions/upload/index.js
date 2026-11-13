@@ -467,8 +467,8 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     const { env, waitUntil, uploadConfig, url, formdata, specifiedChannelName } = context;
     const db = getDatabase(env);
 
-    const limit = uploadConfig.telegramMaxFileMiB ?? 2048;
-    if (formdata.get('file').size > limit * 1024 * 1024) {
+    const limit = uploadConfig.telegramMaxFileMiB ?? 0;
+    if (limit && formdata.get('file').size > limit * 1024 * 1024) {
         return Response.json({ error: 'Telegram file too large', telegramMaxFileMiB: limit }, { status: 413 });
     }
 
