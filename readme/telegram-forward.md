@@ -2,6 +2,12 @@
 
 在图床里启用一个 Telegram 存储渠道，使用该渠道的机器人接收转发消息。将机器人加入指定群并设为管理员，或者在 BotFather 关闭群隐私模式后重新加入群。用同一机器人的 Token 设置 Webhook。
 
+在图床后台打开 **系统设置 → 上传设置 → Telegram → 编辑渠道**，打开 **启用群转发同步**。图床使用已保存的 Bot Token、群 Chat ID 和当前 HTTPS 域名注册 Webhook，成功后可以到 `telegram-forwards` 查看新转发的图片和视频。关闭开关会注销这个渠道注册的 Webhook。一个机器人只能注册一个 Webhook，已有的其他回调需要先在原服务解除。
+
+## 已有的手动配置
+
+以下环境变量方式继续可用。要迁移到开关，先注销旧回调，再打开开关。
+
 | 环境变量 | 配置 |
 | --- | --- |
 | `TELEGRAM_FORWARD_SECRET` | 长随机字符串。与 Telegram `setWebhook` 的 `secret_token` 相同，作为密钥保存。 |

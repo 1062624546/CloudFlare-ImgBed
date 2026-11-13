@@ -14,6 +14,19 @@ export class TelegramAPI {
         };
     }
 
+    async webhook(method, parameters = {}) {
+        const response = await fetch(`${this.baseURL}/${method}`, {
+            method: 'POST',
+            headers: { ...this.defaultHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify(parameters),
+            redirect: 'error',
+            signal: AbortSignal.timeout(10000)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error('Telegram webhook request failed');
+        return data.result;
+    }
+
     /**
      * 发送文件到Telegram
      * @param {File} file - 要发送的文件
