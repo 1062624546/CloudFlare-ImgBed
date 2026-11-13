@@ -1,0 +1,15 @@
+diff --git a/test/fileExpiry.test.js b/test/fileExpiry.test.js
+index b49c469..eee7062 100644
+--- a/test/fileExpiry.test.js
++++ b/test/fileExpiry.test.js
+@@ -524,8 +524,8 @@ describe('file expiry', () => {
+             fetchWithAuth.mockImplementation(async () => jsonResponse(channels));
+             mounted = mountTemplate(SysCogUpload, 'src/components/config/SysCogUpload.vue', { t });
+             await flush();
+-            const groups = mounted.findAll('.channel-group');
+-            expect(groups).toHaveLength(6);
++            const groups = mounted.findAll('.channel-group, .channel-section');
++            expect(groups).toHaveLength(7);
+             expect(groups.at(-1).nextElementSibling.dataset.stub).toBe('FileFormatSettings');
+             expect(groups.at(-1).nextElementSibling.nextElementSibling.dataset.stub).toBe('FileExpirySettings');
+         });
