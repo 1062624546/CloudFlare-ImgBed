@@ -1,0 +1,39 @@
+diff --git a/src/components/config/SysCogUpload.vue b/src/components/config/SysCogUpload.vue
+index 10f361a..3767e76 100644
+--- a/src/components/config/SysCogUpload.vue
++++ b/src/components/config/SysCogUpload.vue
+@@ -146,7 +146,7 @@
+         <div v-if="savedTelegramMaxFileMiB !== null" class="channel-section">
+             <el-form label-position="top">
+                 <el-form-item :label="$t('sysUpload.telegramMaxFileSize')">
+-                    <el-input-number v-model="telegramMaxFileMiB" :min="1" :max="2048" :precision="0" />
++                    <el-input-number v-model="telegramMaxFileMiB" :min="1" :max="4096" :precision="0" />
+                     <span class="field-hint">{{ $t('sysUpload.telegramMaxFileSizeHint') }}</span>
+                 </el-form-item>
+             </el-form>
+diff --git a/src/locales/en.json b/src/locales/en.json
+index 28fb836..1bba868 100644
+--- a/src/locales/en.json
++++ b/src/locales/en.json
+@@ -580,7 +580,7 @@
+   },
+   "sysUpload": {
+     "telegramMaxFileSize": "Telegram file size limit (MiB)",
+-    "telegramMaxFileSizeHint": "Applies to the entire file. Choose 1–2048 MiB.",
++    "telegramMaxFileSizeHint": "Applies to the entire file. Choose 1–4096 MiB.",
+     "telegramMaxFileSizeSaveError": "Unable to save Telegram upload limit.",
+ 
+     "forwardSync": {
+diff --git a/src/locales/zh-CN.json b/src/locales/zh-CN.json
+index b4381f3..3b732dd 100644
+--- a/src/locales/zh-CN.json
++++ b/src/locales/zh-CN.json
+@@ -586,7 +586,7 @@
+ ,
+   "sysUpload": {
+     "telegramMaxFileSize": "Telegram 单文件上传上限（MiB）",
+-    "telegramMaxFileSizeHint": "可设置 1–2048 MiB，适用于整个文件。",
++    "telegramMaxFileSizeHint": "可设置 1–4096 MiB，适用于整个文件。",
+     "telegramMaxFileSizeSaveError": "保存 Telegram 上传上限失败。",
+ 
+     "forwardSync": {
