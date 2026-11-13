@@ -243,8 +243,8 @@ D1Database.prototype.listSettings = function(options) {
     var params = [];
 
     if (prefix) {
-        query += ' WHERE key LIKE ?';
-        params.push(prefix + '%');
+        query += ' WHERE key >= ? AND substr(key, 1, length(?)) = ?';
+        params.push(prefix, prefix, prefix);
     }
 
     // 与 listFiles 一致返回 cursor，否则超过 limit 的键（如大量会话）会让后面的设置永远读不到
