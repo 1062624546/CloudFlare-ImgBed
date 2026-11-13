@@ -24,18 +24,20 @@ export class TelegramAPI {
 
     async webhook(method, parameters = {}) {
         const readOnly = method === 'getWebhookInfo';
-        // Use the same Bot API transport as media uploads.
+        // Parameterless methods do not need a multipart body.
+        const entries = Object.entries(parameters);
         const formData = new FormData();
-        for (const [key, value] of Object.entries(parameters)) {
+        for (const [key, value] of entries) {
             formData.append(key, typeof value === 'string' ? value : JSON.stringify(value));
         }
         const options = {
-            method: 'POST',
+            method: entries.length ? 'POST' : 'GET',
             headers: this.defaultHeaders,
-            body: formData,
             redirect: 'manual',
             signal: AbortSignal.timeout(15000)
         };
+
+        if (options.method === 'POST') options.body = formData;
 
         let response;
         try {

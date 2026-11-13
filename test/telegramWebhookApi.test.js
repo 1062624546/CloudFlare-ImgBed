@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { TelegramAPI } from '../functions/utils/storage/telegramAPI.js';
 
 describe('Telegram webhook API', () => {
-    it('uses the media upload transport and reports Telegram rejection without exposing credentials', async () => {
+    it('omits the body for status queries and reports Telegram rejection without exposing credentials', async () => {
         const originalFetch = globalThis.fetch;
         const api = new TelegramAPI('123:test-token');
         try {
             globalThis.fetch = async (url, options) => {
                 assert.match(url, /\/getWebhookInfo$/);
-                assert.equal(options.method, 'POST');
-                assert.ok(options.body instanceof FormData);
+                assert.equal(options.method, 'GET');
+                assert.equal(options.body, undefined);
                 assert.ok(options.headers['User-Agent']);
                 assert.equal(options.redirect, 'manual');
                 return Response.json({ ok: true, result: { url: '' } });
@@ -17,6 +17,7 @@ describe('Telegram webhook API', () => {
             assert.deepEqual(await api.webhook('getWebhookInfo'), { url: '' });
             globalThis.fetch = async (url, options) => {
                 assert.match(url, /\/setWebhook$/);
+                assert.equal(options.method, 'POST');
                 assert.equal(options.body.get('allowed_updates'), '["message"]');
                 return Response.json({ ok: true, result: true });
             };
