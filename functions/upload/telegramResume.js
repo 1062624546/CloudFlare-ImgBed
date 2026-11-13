@@ -96,27 +96,33 @@ export async function handleTelegramResume(context, action) {
             const expectedSize = Math.min(CHUNK_SIZE, session.size - index * CHUNK_SIZE);
             const length = Number(request.headers.get('Content-Length'));
             if (length && length !== expectedSize) return json({ error: 'Invalid chunk size' }, 400);
-            const reader = request.body?.getReader();
-            if (!reader) return json({ error: 'Missing chunk body' }, 400);
             stage = 'readChunk';
-            const data = new Uint8Array(expectedSize);
-            let offset = 0;
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                if (offset + value.length > expectedSize) {
-                    await reader.cancel();
-                    return json({ error: 'Invalid chunk size' }, 400);
+            if (!request.body) return json({ error: 'Missing chunk body' }, 400);
+            let chunk;
+            if (length === expectedSize) {
+                chunk = await request.blob();
+            } else {
+                const reader = request.body.getReader();
+                const pieces = [];
+                let size = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    size += value.byteLength;
+                    if (size > expectedSize) {
+                        await reader.cancel();
+                        return json({ error: 'Invalid chunk size' }, 400);
+                    }
+                    pieces.push(value);
                 }
-                data.set(value, offset);
-                offset += value.length;
+                chunk = new Blob(pieces);
             }
-            if (offset !== expectedSize) return json({ error: 'Invalid chunk size' }, 400);
+            if (chunk.size !== expectedSize) return json({ error: 'Invalid chunk size' }, 400);
 
             const fileName = session.fileName + '.part' + String(index).padStart(3, '0');
             const api = new TelegramAPI(channel.botToken, channel.proxyUrl);
             stage = 'sendDocument';
-            const response = await api.sendFile(new Blob([data]), channel.chatId, 'sendDocument', 'document',
+            const response = await api.sendFile(chunk, channel.chatId, 'sendDocument', 'document',
                 `Part ${index + 1}/${session.totalChunks}`, fileName, { signal: AbortSignal.timeout(120000) });
             if (!response.ok) {
                 const retryAfter = response.parameters?.retry_after;
