@@ -1,0 +1,160 @@
+diff --git a/src/components/config/SysCogUpload.vue b/src/components/config/SysCogUpload.vue
+index 577ec18..10f361a 100644
+--- a/src/components/config/SysCogUpload.vue
++++ b/src/components/config/SysCogUpload.vue
+@@ -143,6 +143,14 @@
+             </div>
+         </div>
+ 
++        <div v-if="savedTelegramMaxFileMiB !== null" class="channel-section">
++            <el-form label-position="top">
++                <el-form-item :label="$t('sysUpload.telegramMaxFileSize')">
++                    <el-input-number v-model="telegramMaxFileMiB" :min="1" :max="2048" :precision="0" />
++                    <span class="field-hint">{{ $t('sysUpload.telegramMaxFileSizeHint') }}</span>
++                </el-form-item>
++            </el-form>
++        </div>
+         <FileFormatSettings ref="fileFormatSettings" @state-change="uploadRuleStates.fileFormat = $event" />
+         <FileExpirySettings ref="fileExpirySettings" embedded @state-change="uploadRuleStates.fileExpiry = $event" />
+         <FloatingSaveButton :show="uploadRulesReady" :loading="savingUploadRules" :dirty="uploadRulesDirty" @click="saveUploadRules" />
+@@ -638,6 +646,8 @@ components: {
+ },
+ data() {
+     return {
++    telegramMaxFileMiB: 2048,
++    savedTelegramMaxFileMiB: null,
+     uploadRuleStates: { fileFormat: {}, fileExpiry: {} },
+     savingUploadRules: false,
+     // 渠道类型筛选
+@@ -741,8 +751,8 @@ computed: {
+         return this.forwardSync.enabled ? 'enabled' : 'disabled';
+     },
+ 
+-    uploadRulesReady() { return Object.values(this.uploadRuleStates).some(state => state.available && !state.loading); },
+-    uploadRulesDirty() { return Object.values(this.uploadRuleStates).some(state => state.dirty); },
++    uploadRulesReady() { return this.savedTelegramMaxFileMiB !== null || Object.values(this.uploadRuleStates).some(state => state.available && !state.loading); },
++    uploadRulesDirty() { return this.savedTelegramMaxFileMiB !== null && this.telegramMaxFileMiB !== this.savedTelegramMaxFileMiB || Object.values(this.uploadRuleStates).some(state => state.dirty); },
+     // 筛选下拉框选项
+     filterOptions() {
+         return [
+@@ -814,7 +824,19 @@ methods: {
+                     saved = true;
+                 }
+             }
++            if (this.savedTelegramMaxFileMiB !== null && this.telegramMaxFileMiB !== this.savedTelegramMaxFileMiB) {
++                const response = await fetchWithAuth('/api/manage/sysConfig/upload', {
++                    method: 'PATCH',
++                    headers: { 'Content-Type': 'application/json' },
++                    body: JSON.stringify({ telegramMaxFileMiB: this.telegramMaxFileMiB })
++                });
++                if (!response.ok) throw new Error('Unable to save Telegram upload limit');
++                this.savedTelegramMaxFileMiB = (await response.json()).telegramMaxFileMiB;
++                saved = true;
++            }
+             if (saved) this.$message.success(this.$t('sysOthers.settingsSaved'));
++        } catch {
++            this.$message.error(this.$t('sysUpload.telegramMaxFileSizeSaveError'));
+         } finally {
+             this.savingUploadRules = false;
+         }
+@@ -1309,6 +1331,7 @@ mounted() {
+     .then((response) => response.json())
+     .then((data) => {
+         this.telegramSettings = data.telegram;
++        this.telegramMaxFileMiB = this.savedTelegramMaxFileMiB = data.telegramMaxFileMiB ?? 2048;
+         // 确保 R2 渠道有 quota 默认值
+         if (data.cfr2 && data.cfr2.channels) {
+             data.cfr2.channels = data.cfr2.channels.map(channel => ({
+diff --git a/src/components/upload/UploadForm.vue b/src/components/upload/UploadForm.vue
+index 15546dd..11651b4 100644
+--- a/src/components/upload/UploadForm.vue
++++ b/src/components/upload/UploadForm.vue
+@@ -375,7 +375,7 @@ watch: {
+ },
+ computed: {
+     ...mapGetters([
+-        'storeAutoReUpload'
++        'storeAutoReUpload', 'userConfig'
+     ]),
+     defaultCopyFormat() {
+         return COPY_FORMATS.find(format => format.value === this.selectedUrlForm) || COPY_FORMATS[0]
+@@ -1077,7 +1077,8 @@ methods: {
+             
+             // 动图保留原文件；静态图片超过阈值时按设置压缩。
+             const needCustomCompress = !preserveAnimation && getFileTypeCategory(processedFile.type) === 'image' && this.customerCompress && processedFile.size / 1024 / 1024 > this.compressBar
+-            const isLtLim = processedFile.size / 1024 / 1024 <= 1024 || this.uploadChannel !== 'telegram'
++            const limit = this.userConfig?.telegramMaxFileMiB ?? 2048
++            const isLtLim = processedFile.size <= limit * 1024 * 1024 || this.uploadChannel !== 'telegram'
+ 
+             const pushFileToQueue = (file, serverCompress) => {
+                 const fileUrl = URL.createObjectURL(file)
+@@ -1106,10 +1107,10 @@ methods: {
+             if (needCustomCompress) {
+                 //尝试压缩图片
+                 imageConversion.compressAccurately(processedFile, 1024 * this.compressQuality).then((res) => {
+-                    //如果压缩后大于1024MB，且上传渠道为telegram，则不上传
+-                    if (res.size / 1024 / 1024 > 1024 && this.uploadChannel === 'telegram') {
+-                        this.$message.error(this.$t('uploadForm.compressedFileTooLarge', { name: processedFile.name }))
+-                        reject(this.$t('uploadForm.fileSizeTooLarge'))
++                    // Telegram 使用后台配置的整文件大小上限。
++                    if (res.size > limit * 1024 * 1024 && this.uploadChannel === 'telegram') {
++                        this.$message.error(this.$t('uploadForm.telegramFileTooLarge', { name: processedFile.name, limit }))
++                        return reject(this.$t('uploadForm.fileSizeTooLarge'))
+                     }
+                     this.uploading = true
+                     //将res包装成新的file
+@@ -1132,7 +1133,7 @@ methods: {
+                 const needServerCompress = !preserveAnimation && this.uploadChannel === 'telegram' && this.serverCompress && (getFileTypeCategory(processedFile.type) === 'image' ? processedFile.size / 1024 / 1024 < 10 : true)
+                 pushFileToQueue(processedFile, needServerCompress)
+             } else {
+-                this.$message.error(this.$t('uploadForm.fileTooLarge', { name: processedFile.name }))
++                this.$message.error(this.$t('uploadForm.telegramFileTooLarge', { name: processedFile.name, limit }))
+                 reject(this.$t('uploadForm.fileSizeTooLarge'))
+             }
+         })
+diff --git a/src/locales/en.json b/src/locales/en.json
+index 3e62ae5..28fb836 100644
+--- a/src/locales/en.json
++++ b/src/locales/en.json
+@@ -80,6 +80,7 @@
+     "uploadSuccess": "{name} uploaded successfully",
+     "uploadFailed": "{name} upload failed",
+     "compressFailedCannotUpload": "{name} compression failed, cannot upload!",
++    "telegramFileTooLarge": "{name} exceeds the Telegram limit of {limit} MiB.",
+     "fileTooLarge": "{name} file too large, cannot upload!",
+     "compressedFileTooLarge": "{name} still too large after compression, cannot upload!",
+     "copySuccess": "Copied successfully",
+@@ -578,6 +579,10 @@
+     "dupScanTimedOut": " (stopped early after exceeding the time budget)"
+   },
+   "sysUpload": {
++    "telegramMaxFileSize": "Telegram file size limit (MiB)",
++    "telegramMaxFileSizeHint": "Applies to the entire file. Choose 1–2048 MiB.",
++    "telegramMaxFileSizeSaveError": "Unable to save Telegram upload limit.",
++
+     "forwardSync": {
+       "label": "Sync forwarded group media",
+       "checking": "Checking Telegram webhook…",
+diff --git a/src/locales/zh-CN.json b/src/locales/zh-CN.json
+index 8bb3c8d..b4381f3 100644
+--- a/src/locales/zh-CN.json
++++ b/src/locales/zh-CN.json
+@@ -81,6 +81,7 @@
+     "uploadSuccess": "{name}上传成功",
+     "uploadFailed": "{name}上传失败",
+     "compressFailedCannotUpload": "{name}压缩失败，无法上传!",
++    "telegramFileTooLarge": "{name} 超过 Telegram 单文件上限 {limit} MiB。",
+     "fileTooLarge": "{name}文件过大，无法上传!",
+     "compressedFileTooLarge": "{name}压缩后文件过大，无法上传!",
+     "copySuccess": "复制成功",
+@@ -584,6 +585,10 @@
+   }
+ ,
+   "sysUpload": {
++    "telegramMaxFileSize": "Telegram 单文件上传上限（MiB）",
++    "telegramMaxFileSizeHint": "可设置 1–2048 MiB，适用于整个文件。",
++    "telegramMaxFileSizeSaveError": "保存 Telegram 上传上限失败。",
++
+     "forwardSync": {
+       "label": "启用群转发同步",
+       "checking": "正在检查 Telegram 回调…",

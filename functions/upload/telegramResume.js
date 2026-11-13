@@ -8,7 +8,6 @@ import {
 } from './uploadTools.js';
 
 const CHUNK_SIZE = 16 * 1024 * 1024;
-const MAX_SIZE = 2 * 1024 * 1024 * 1024;
 const TTL = 72 * 60 * 60;
 const KEY_PREFIX = 'manage@telegramResume@';
 const ID_PATTERN = /^[a-f0-9]{64}$/;
@@ -38,8 +37,12 @@ export async function handleTelegramResume(context, action) {
             const size = Number(form.get('size'));
             const fingerprint = form.get('fingerprint');
             if (typeof fileName !== 'string' || !fileName || fileName.length > 255 ||
-                !Number.isSafeInteger(size) || size < 1 || size > MAX_SIZE || typeof fingerprint !== 'string' || !ID_PATTERN.test(fingerprint)) {
+                !Number.isSafeInteger(size) || size < 1 || typeof fingerprint !== 'string' || !ID_PATTERN.test(fingerprint)) {
                 return json({ error: 'Invalid filename, size or SHA-256 fingerprint' }, 400);
+            }
+            const limit = uploadConfig.telegramMaxFileMiB ?? 2048;
+            if (size > limit * 1024 * 1024) {
+                return json({ error: 'Telegram file too large', telegramMaxFileMiB: limit }, 413);
             }
             const formatError = checkUploadFormat(fileName, uploadConfig);
             if (formatError) return formatError;

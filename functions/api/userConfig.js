@@ -33,7 +33,8 @@ export async function onRequest(context) {
     // 文件有效期：上传页和 API 用户据此展示可选项，最终仍由上传接口按设置校验
     // 字段始终存在，前端据此区分“后端支持但功能关闭”（enabled=false）和“后端尚不支持”（没有该字段）；
     // serverRuntime 只表示部署平台，不能代替这个能力判断
-    const { fileExpiry } = await fetchUploadConfig(env);
+    const { fileExpiry, telegramMaxFileMiB } = await fetchUploadConfig(env);
+    userConfig.telegramMaxFileMiB = telegramMaxFileMiB;
     userConfig.fileExpiry = fileExpiry?.enabled
         ? {
             enabled: true,
