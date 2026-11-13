@@ -40,8 +40,8 @@ export async function handleTelegramResume(context, action) {
                 !Number.isSafeInteger(size) || size < 1 || typeof fingerprint !== 'string' || !ID_PATTERN.test(fingerprint)) {
                 return json({ error: 'Invalid filename, size or SHA-256 fingerprint' }, 400);
             }
-            const limit = uploadConfig.telegramMaxFileMiB ?? 2048;
-            if (size > limit * 1024 * 1024) {
+            const limit = uploadConfig.telegramMaxFileMiB ?? 0;
+            if (limit && size > limit * 1024 * 1024) {
                 return json({ error: 'Telegram file too large', telegramMaxFileMiB: limit }, 413);
             }
             const formatError = checkUploadFormat(fileName, uploadConfig);
@@ -188,7 +188,14 @@ export async function handleTelegramResume(context, action) {
 }
 
 async function listParts(db, key) {
-    const { keys } = await db.list({ prefix: key + '@' });
-    return keys.map(record => record.value ? JSON.parse(record.value) : record.metadata)
-        .sort((a, b) => a.index - b.index);
+    const parts = [];
+    let cursor;
+    do {
+        const page = await db.list({ prefix: key + '@', cursor });
+        for (const record of page.keys) {
+            parts.push(record.value ? JSON.parse(record.value) : record.metadata);
+        }
+        cursor = page.list_complete === false ? page.cursor : undefined;
+    } while (cursor);
+    return parts.sort((a, b) => a.index - b.index);
 }
