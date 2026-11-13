@@ -73,6 +73,12 @@ export async function handleChunkMerge(context) {
         // 检查分块上传状态
         const chunkStatuses = await checkChunkUploadStatuses(env, uploadId, totalChunks);
 
+        const limit = context.uploadConfig.telegramMaxFileMiB ?? 2048;
+        if (uploadChannel === 'telegram' &&
+            chunkStatuses.reduce((sum, chunk) => sum + (chunk.uploadResult?.size || 0), 0) > limit * 1024 * 1024) {
+            return Response.json({ error: 'Telegram file too large', telegramMaxFileMiB: limit }, { status: 413 });
+        }
+
         // 输出初始状态摘要
         const initialStatusSummary = chunkStatuses.reduce((acc, chunk) => {
             acc[chunk.status] = (acc[chunk.status] || 0) + 1;

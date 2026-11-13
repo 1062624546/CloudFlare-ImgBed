@@ -293,7 +293,7 @@ async function processFileUpload(context, formdata = null) {
     } else {
         // ----------------Telegram New 渠道-------------------
         const res = await uploadFileToTelegram(context, fullId, metadata, fileExt, fileName, fileType, returnLink);
-        if (res.status === 200 || !autoRetry) {
+        if (res.status === 200 || res.status === 413 || !autoRetry) {
             return res;
         } else {
             err = await res.text();
@@ -466,6 +466,11 @@ async function uploadFileToS3(context, fullId, metadata, returnLink) {
 async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName, fileType, returnLink) {
     const { env, waitUntil, uploadConfig, url, formdata, specifiedChannelName } = context;
     const db = getDatabase(env);
+
+    const limit = uploadConfig.telegramMaxFileMiB ?? 2048;
+    if (formdata.get('file').size > limit * 1024 * 1024) {
+        return Response.json({ error: 'Telegram file too large', telegramMaxFileMiB: limit }, { status: 413 });
+    }
 
     // 选择一个 Telegram 渠道上传
     const tgSettings = uploadConfig.telegram;

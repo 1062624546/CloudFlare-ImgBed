@@ -28,6 +28,17 @@ export async function onRequest(context) {
         })
     }
 
+    if (request.method === 'PATCH') {
+        const body = await request.json().catch(() => null);
+        const limit = body?.telegramMaxFileMiB;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 2048) {
+            return Response.json({ error: 'Telegram upload limit must be an integer from 1 to 2048 MiB' }, { status: 400 });
+        }
+        const key = 'manage@telegramMaxFileMiB';
+        await db.put(key, String(limit));
+        return Response.json({ telegramMaxFileMiB: limit });
+    }
+
     // POST保存设置
     if (request.method === 'POST') {
         const body = await request.json()
@@ -341,6 +352,8 @@ export async function getUploadConfig(db, env) {
     webdav.loadBalance = webdavLoadBalance
 
 
+    const limit = Number(await db.get('manage@telegramMaxFileMiB'));
+    settings.telegramMaxFileMiB = Number.isInteger(limit) && limit >= 1 && limit <= 2048 ? limit : 2048;
     settings.telegram = telegram
     settings.cfr2 = cfr2
     settings.s3 = s3
