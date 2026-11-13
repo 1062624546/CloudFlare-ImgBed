@@ -1,0 +1,100 @@
+diff --git a/src/components/upload/UploadFileItem.vue b/src/components/upload/UploadFileItem.vue
+index ad7c048..572709e 100644
+--- a/src/components/upload/UploadFileItem.vue
++++ b/src/components/upload/UploadFileItem.vue
+@@ -5,10 +5,8 @@
+             <video
+                 v-if="isVideo(file)"
+                 :src="file.url"
+-                autoplay
+-                muted
++                preload="none"
+                 playsinline
+-                loop
+             >
+                 Your browser does not support the video tag.
+             </video>
+@@ -69,7 +67,8 @@
+                 </div>
+             </div>
+             <div class="upload-list-item-progress" v-else>
+-                <el-progress :percentage="file.progreess" :status="file.status" :show-text="false"/>
++                <el-progress :percentage="file.progreess" :status="file.status === 'exception' ? 'exception' : undefined" :show-text="false"/>
++                <span class="upload-progress-percent">{{ file.progreess }}%</span>
+             </div>
+         </div>
+         <div class="upload-list-item-action">
+@@ -360,6 +359,9 @@ html.dark .upload-file-badge-compressed {
+ 
+ /* Progress Bar */
+ .upload-list-item-progress {
++    display: flex;
++    align-items: center;
++    gap: 8px;
+     margin-top: 8px;
+     width: 100%;
+     box-sizing: border-box;
+@@ -370,6 +372,15 @@ html.dark .upload-file-badge-compressed {
+ }
+ .upload-list-item-progress :deep(.el-progress) {
+     --el-color-primary: var(--primary-color);
++    flex: 1;
++    min-width: 0;
++}
++.upload-progress-percent {
++    flex: none;
++    min-width: 4ch;
++    text-align: right;
++    font-size: 12px;
++    font-variant-numeric: tabular-nums;
+ }
+ .upload-list-item-progress :deep(.el-progress-bar) {
+     padding-right: 0;
+diff --git a/src/utils/upload/telegramResume.js b/src/utils/upload/telegramResume.js
+index 144669c..a77296b 100644
+--- a/src/utils/upload/telegramResume.js
++++ b/src/utils/upload/telegramResume.js
+@@ -1,6 +1,8 @@
+ import axios from '@/utils/axios'
+ import { computeSha256 } from './sha256'
+ 
++const PART_CONCURRENCY = 2
++
+ function uploadRequest(url, action, signal, data, id, index) {
+     const endpoint = new URL(url, window.location.origin)
+     endpoint.searchParams.set('telegramResume', action)
+@@ -65,14 +67,28 @@ export async function uploadResumableTelegramFile(url, file, signal, onProgress)
+     const report = () => onProgress(Math.round(100 * confirmed / file.size))
+     report()
+ 
+-    for (let index = 0; index < totalChunks; index++) {
+-        if (completed.has(index)) continue
+-        const start = index * chunkSize
+-        await uploadPart(url, signal, file.slice(start, start + sizeOf(index), 'application/octet-stream'), id, index)
+-        confirmed += sizeOf(index)
+-        report()
++    const pending = Array.from({ length: totalChunks }, (_, index) => index)
++        .filter(index => !completed.has(index))
++    let next = 0
++    let failure
++    async function uploadPendingParts() {
++        while (!failure && next < pending.length) {
++            const index = pending[next++]
++            const start = index * chunkSize
++            try {
++                signal.throwIfAborted()
++                await uploadPart(url, signal, file.slice(start, start + sizeOf(index), 'application/octet-stream'), id, index)
++                confirmed += sizeOf(index)
++                report()
++            } catch (error) {
++                failure ??= error
++            }
++        }
+     }
+ 
++    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, pending.length) }, uploadPendingParts))
++    if (failure) throw failure
++
+     const response = await uploadRequest(url, 'complete', signal, undefined, id)
+     localStorage.removeItem(key)
+     return response
