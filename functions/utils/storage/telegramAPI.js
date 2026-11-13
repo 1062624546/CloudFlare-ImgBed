@@ -1,3 +1,11 @@
+class TelegramWebhookError extends Error {
+    constructor(reason, status) {
+        super(reason);
+        this.reason = reason;
+        this.status = status;
+    }
+}
+
 /**
  * Telegram API 封装类
  */
@@ -15,15 +23,34 @@ export class TelegramAPI {
     }
 
     async webhook(method, parameters = {}) {
-        const response = await fetch(`${this.baseURL}/${method}`, {
-            method: 'POST',
-            headers: { ...this.defaultHeaders, 'Content-Type': 'application/json' },
-            body: JSON.stringify(parameters),
+        const readOnly = method === 'getWebhookInfo';
+        const options = {
+            method: readOnly ? 'GET' : 'POST',
             redirect: 'error',
-            signal: AbortSignal.timeout(10000)
-        });
-        const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error('Telegram webhook request failed');
+            signal: AbortSignal.timeout(15000)
+        };
+        if (!readOnly) {
+            options.headers = { 'Content-Type': 'application/json' };
+            options.body = JSON.stringify(parameters);
+        }
+
+        let response;
+        try {
+            response = await fetch(`${this.baseURL}/${method}`, options);
+        } catch (error) {
+            throw new TelegramWebhookError(error.name === 'TimeoutError' ? 'timeout' : 'connectionFailed');
+        }
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.ok) {
+            const status = Number.isInteger(data?.error_code) ? data.error_code : response.status;
+            const reason = status === 401 || status === 404 ? 'tokenRejected'
+                : status === 429 ? 'rateLimited'
+                    : data?.ok === false ? 'telegramRejected' : 'invalidTelegramResponse';
+            throw new TelegramWebhookError(reason, status);
+        }
+        if (readOnly && typeof data.result?.url !== 'string') {
+            throw new TelegramWebhookError('invalidTelegramResponse', response.status);
+        }
         return data.result;
     }
 

@@ -3,6 +3,15 @@ import { forwardConfigKey, readForwardConfig, telegramBotId, telegramTokenDigest
 import { TelegramAPI } from '../../../utils/storage/telegramAPI.js';
 import { getUploadConfig } from '../sysConfig/upload.js';
 
+function telegramFailure(stage, error) {
+    return Response.json({
+        error: 'telegramUnavailable',
+        stage,
+        reason: error?.reason || 'unknown',
+        telegramStatus: error?.status
+    }, { status: 502 });
+}
+
 export async function onRequest({ request, env }) {
     const { method } = request;
     if (method !== 'GET' && method !== 'POST') return new Response(null, { status: 405 });
@@ -42,8 +51,8 @@ export async function onRequest({ request, env }) {
     let webhook;
     try {
         webhook = await api.webhook('getWebhookInfo');
-    } catch {
-        return Response.json({ error: 'telegramUnavailable' }, { status: 502 });
+    } catch (error) {
+        return telegramFailure('getWebhookInfo', error);
     }
     const active = Boolean(owned && webhook.url === config.url);
     const conflict = Boolean(webhook.url && !active);
@@ -64,13 +73,19 @@ export async function onRequest({ request, env }) {
             await db.put(key, JSON.stringify(next));
             try {
                 await api.webhook('setWebhook', { url: next.url, secret_token: secret, allowed_updates: ['message'] });
-            } catch {
+            } catch (error) {
                 // A lost response may still mean Telegram registered the webhook. Keep the
                 // record so the next status check can reconcile the result.
-                return Response.json({ error: 'telegramUnavailable' }, { status: 502 });
+                return telegramFailure('setWebhook', error);
             }
         } else if (owned) {
-            if (active) await api.webhook('deleteWebhook');
+            if (active) {
+                try {
+                    await api.webhook('deleteWebhook');
+                } catch (error) {
+                    return telegramFailure('deleteWebhook', error);
+                }
+            }
             await db.delete(key);
         }
     } catch {
