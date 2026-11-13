@@ -31,8 +31,8 @@ export async function onRequest(context) {
     if (request.method === 'PATCH') {
         const body = await request.json().catch(() => null);
         const limit = body?.telegramMaxFileMiB;
-        if (!Number.isInteger(limit) || limit < 1 || limit > 2048) {
-            return Response.json({ error: 'Telegram upload limit must be an integer from 1 to 2048 MiB' }, { status: 400 });
+        if (!Number.isInteger(limit) || limit < 1 || limit > 4096) {
+            return Response.json({ error: 'Telegram upload limit must be an integer from 1 to 4096 MiB' }, { status: 400 });
         }
         const key = 'manage@telegramMaxFileMiB';
         await db.put(key, String(limit));
@@ -353,7 +353,7 @@ export async function getUploadConfig(db, env) {
 
 
     const limit = Number(await db.get('manage@telegramMaxFileMiB'));
-    settings.telegramMaxFileMiB = Number.isInteger(limit) && limit >= 1 && limit <= 2048 ? limit : 2048;
+    settings.telegramMaxFileMiB = Number.isInteger(limit) && limit >= 1 && limit <= 4096 ? limit : 2048;
     settings.telegram = telegram
     settings.cfr2 = cfr2
     settings.s3 = s3
