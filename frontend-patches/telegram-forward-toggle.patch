@@ -1,0 +1,144 @@
+diff --git a/src/components/config/SysCogUpload.vue b/src/components/config/SysCogUpload.vue
+index 9c57134..577ec18 100644
+--- a/src/components/config/SysCogUpload.vue
++++ b/src/components/config/SysCogUpload.vue
+@@ -453,6 +453,12 @@
+                     <el-form-item :label="$t('sysUpload.proxyDomain')">
+                         <el-input v-model="editChannel.proxyUrl" :placeholder="$t('sysUpload.proxyDomainPlaceholder')"/>
+                     </el-form-item>
++                    <el-form-item :label="$t('sysUpload.forwardSync.label')">
++                        <el-switch :model-value="forwardSync.enabled" :loading="forwardBusy"
++                            :disabled="forwardBusy || forwardSync.conflict || forwardCredentialsChanged"
++                            @change="updateForwardSync"/>
++                        <div class="field-hint">{{ $t('sysUpload.forwardSync.' + forwardSyncStatus) }}</div>
++                    </el-form-item>
+                 </template>
+                 <template v-else-if="currentChannelType === 'cfr2'">
+                     <el-form-item :label="$t('sysUpload.publicUrl')">
+@@ -673,6 +679,9 @@ data() {
+     currentChannelIndex: -1,
+     currentChannel: null,
+     editChannel: {},
++    forwardSync: {},
++    forwardBusy: false,
++    forwardRequestId: 0,
+ 
+     // 新增渠道表单
+     newChannel: {
+@@ -718,6 +727,20 @@ data() {
+     };
+ },
+ computed: {
++    forwardCredentialsChanged() {
++        if (this.currentChannelType !== 'telegram') return false;
++        const saved = this.telegramSettings.channels[this.currentChannelIndex];
++        return !saved || ['botToken', 'chatId', 'proxyUrl', 'enabled'].some(key => saved[key] !== this.editChannel[key]);
++    },
++    forwardSyncStatus() {
++        if (this.forwardCredentialsChanged) return 'saveFirst';
++        if (this.forwardBusy) return 'checking';
++        if (this.forwardSync.error) return this.forwardSync.error;
++        if (this.forwardSync.conflict) return 'webhookConflict';
++        if (this.forwardSync.deliveryError) return 'deliveryError';
++        return this.forwardSync.enabled ? 'enabled' : 'disabled';
++    },
++
+     uploadRulesReady() { return Object.values(this.uploadRuleStates).some(state => state.available && !state.loading); },
+     uploadRulesDirty() { return Object.values(this.uploadRuleStates).some(state => state.dirty); },
+     // 筛选下拉框选项
+@@ -898,6 +921,40 @@ methods: {
+             this.editChannel.quota = { enabled: false, limitGB: 10, threshold: 95 };
+         }
+         this.showEditDialog = true;
++        this.forwardSync = {};
++        if (type === 'telegram') this.requestForwardSync();
++    },
++    async requestForwardSync(enabled) {
++        const requestId = ++this.forwardRequestId;
++        this.forwardBusy = true;
++        const url = '/api/manage/telegram/forward?channel=' + encodeURIComponent(this.editChannel.name);
++        try {
++            const options = enabled === undefined ? {} : {
++                method: 'POST',
++                headers: { 'Content-Type': 'application/json' },
++                body: JSON.stringify({ enabled })
++            };
++            const response = await fetchWithAuth(url, options);
++            const data = await response.json();
++            if (requestId !== this.forwardRequestId) return;
++            if (response.ok) {
++                this.forwardSync = data;
++            } else {
++                this.forwardSync = {
++                    ...this.forwardSync,
++                    conflict: data.error === 'webhookConflict',
++                    error: ['invalidChannel', 'webhookConflict', 'telegramUnavailable'].includes(data.error)
++                        ? data.error : 'updateFailed'
++                };
++            }
++        } catch {
++            if (requestId === this.forwardRequestId) this.forwardSync = { ...this.forwardSync, error: 'updateFailed' };
++        } finally {
++            if (requestId === this.forwardRequestId) this.forwardBusy = false;
++        }
++    },
++    updateForwardSync(enabled) {
++        return this.requestForwardSync(enabled);
+     },
+     // 从详情页打开编辑
+     openEditFromDetail() {
+@@ -925,6 +982,8 @@ methods: {
+     // 重置编辑弹窗数据
+     resetEditData() {
+         this.editChannel = {};
++        this.forwardRequestId++;
++        this.forwardBusy = false;
+     },
+     // 渠道类型变更时重置表单
+     onChannelTypeChange() {
+diff --git a/src/locales/en.json b/src/locales/en.json
+index 68e2a94..3e62ae5 100644
+--- a/src/locales/en.json
++++ b/src/locales/en.json
+@@ -578,6 +578,18 @@
+     "dupScanTimedOut": " (stopped early after exceeding the time budget)"
+   },
+   "sysUpload": {
++    "forwardSync": {
++      "label": "Sync forwarded group media",
++      "checking": "Checking Telegram webhook…",
++      "enabled": "Enabled. Newly forwarded media appears in telegram-forwards.",
++      "disabled": "Turn on to register the Telegram webhook.",
++      "saveFirst": "Save your channel changes, then reopen this dialog.",
++      "webhookConflict": "This bot already has another webhook. Disconnect it in the original service first.",
++      "invalidChannel": "Use an enabled channel with a group Chat ID and open the site over HTTPS.",
++      "telegramUnavailable": "Telegram is unavailable. Check the bot token and proxy settings, then retry.",
++      "updateFailed": "Update failed. Reopen this dialog to check the status.",
++      "deliveryError": "Registered, but Telegram reported a delivery error."
++    },
+     "title": "Upload Channel Management",
+     "titleTooltip": "Manage all upload channel configurations. Click a card to view details or edit",
+     "filterPlaceholder": "Filter channel type",
+diff --git a/src/locales/zh-CN.json b/src/locales/zh-CN.json
+index db50a57..8bb3c8d 100644
+--- a/src/locales/zh-CN.json
++++ b/src/locales/zh-CN.json
+@@ -584,6 +584,18 @@
+   }
+ ,
+   "sysUpload": {
++    "forwardSync": {
++      "label": "启用群转发同步",
++      "checking": "正在检查 Telegram 回调…",
++      "enabled": "已启用。新转发的图片和视频会出现在 telegram-forwards 目录。",
++      "disabled": "开启后自动注册 Telegram 回调。",
++      "saveFirst": "请先保存渠道修改，再重新打开此窗口。",
++      "webhookConflict": "机器人已绑定其他 Webhook。请先在原服务解除绑定。",
++      "invalidChannel": "请确认渠道已启用、Chat ID 为群 ID，且图床通过 HTTPS 访问。",
++      "telegramUnavailable": "无法连接 Telegram，请检查机器人 Token 和代理设置后重试。",
++      "updateFailed": "更新失败，请重新打开窗口确认状态。",
++      "deliveryError": "已注册，但 Telegram 报告回调投递失败。"
++    },
+     "title": "上传渠道管理",
+     "titleTooltip": "管理所有上传渠道的配置，点击卡片查看详情或编辑",
+     "filterPlaceholder": "筛选渠道类型",

@@ -1,3 +1,4 @@
+import { readForwardConfig, telegramBotId, telegramTokenDigest } from '../../utils/telegramForwardConfig.js';
 import { getDatabase } from '../../utils/databaseAdapter.js';
 import { addFileToIndex } from '../../utils/indexManager.js';
 import { resolveFileExt, resolveFileType } from '../../utils/mimeTypes.js';
@@ -17,11 +18,18 @@ function matchesSecret(expected, actual) {
 
 export async function onRequest(context) {
     const { env, request } = context;
-    const secret = env.TELEGRAM_FORWARD_SECRET;
-    const chatId = env.TELEGRAM_FORWARD_CHAT_ID;
-    const channelName = env.TELEGRAM_FORWARD_CHANNEL;
-    if (!secret || !/^-\d+$/.test(chatId || '') || !channelName) return new Response(null, { status: 404 });
     if (request.method !== 'POST') return new Response(null, { status: 405 });
+    const botId = new URL(request.url).searchParams.get('bot');
+    const db = getDatabase(env);
+    const forward = botId === null ? {
+        secret: env.TELEGRAM_FORWARD_SECRET,
+        chatId: env.TELEGRAM_FORWARD_CHAT_ID,
+        channelName: env.TELEGRAM_FORWARD_CHANNEL,
+        userId: env.TELEGRAM_FORWARD_USER_ID,
+        folder: env.TELEGRAM_FORWARD_FOLDER
+    } : /^\d+$/.test(botId) ? await readForwardConfig(db, botId) : null;
+    const { secret, chatId, channelName, userId, folder, tokenDigest } = forward || {};
+    if (!secret || !/^-\d+$/.test(chatId || '') || !channelName) return new Response(null, { status: 404 });
     if (!matchesSecret(secret, request.headers.get('X-Telegram-Bot-Api-Secret-Token'))) {
         return new Response(null, { status: 403 });
     }
@@ -34,7 +42,7 @@ export async function onRequest(context) {
     }
     if (!message?.forward_origin || String(message.chat?.id) !== String(chatId) ||
         !['group', 'supergroup'].includes(message.chat.type) ||
-        (env.TELEGRAM_FORWARD_USER_ID && String(message.from?.id) !== String(env.TELEGRAM_FORWARD_USER_ID))) {
+        (userId && String(message.from?.id) !== String(userId))) {
         return new Response(null, { status: 204 });
     }
 
@@ -51,18 +59,22 @@ export async function onRequest(context) {
     }
 
     const config = await fetchUploadConfig(env, context);
-    if (!config.telegram?.channels?.some(channel => channel.name === channelName)) {
+    const channel = config.telegram?.channels?.find(item => item.name === channelName);
+    if (botId && (!channel || telegramBotId(channel.botToken) !== botId ||
+        String(channel.chatId) !== chatId || await telegramTokenDigest(channel.botToken) !== tokenDigest)) {
+        return new Response(null, { status: 204 });
+    }
+    if (!channel) {
         return new Response('Telegram channel unavailable', { status: 503 });
     }
 
-    const directory = sanitizeUploadFolder(env.TELEGRAM_FORWARD_FOLDER || 'telegram-forwards');
+    const directory = sanitizeUploadFolder(folder || 'telegram-forwards');
     const fallbackType = media === photo ? 'image/jpeg' : media === video ? 'video/mp4' : documentType;
     const type = resolveFileType(media.file_name, media.mime_type || fallbackType);
     const inferredExtension = media === photo ? 'jpg' : resolveFileExt(media.file_name || '', type);
     const extension = /^[a-z0-9]+$/i.test(inferredExtension) ? inferredExtension : 'bin';
     const fileName = media.file_name || `telegram-${message.message_id}.${extension}`;
     const fileId = [directory, `tg-${chatId}-${message.message_id}.${extension}`].filter(Boolean).join('/');
-    const db = getDatabase(env);
     const existing = await db.getWithMetadata(fileId);
 
     const size = media.file_size || 0;
