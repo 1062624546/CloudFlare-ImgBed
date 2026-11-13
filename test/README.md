@@ -99,3 +99,5 @@ The main repository's `.github/workflows/regression.yml` runs on PRs targeting `
 4. Builds Pages Functions.
 
 The runner reports test counts; this document maintains functional scope rather than a fixed numeric pass criterion. CI supports code review. Changes that need real channel or deployment validation should describe that verification in the PR.
+
+`telegramResume.test.js` 使用模拟 Telegram API 覆盖分片失败、限流重试提示、查询断点、跳过已完成分片及重复完成请求。

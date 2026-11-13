@@ -1,0 +1,136 @@
+From e21d55ff170a6a79921e338c6bec100ed6f735ae Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Fri, 13 Nov 2026 10:25:15 +0800
+Subject: [PATCH] =?UTF-8?q?=E6=94=AF=E6=8C=81=20Telegram=20=E5=A4=A7?=
+ =?UTF-8?q?=E6=96=87=E4=BB=B6=E6=96=AD=E7=82=B9=E7=BB=AD=E4=BC=A0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ src/components/upload/UploadForm.vue | 15 ++++++
+ src/utils/upload/telegramResume.js   | 79 ++++++++++++++++++++++++++++
+ 2 files changed, 94 insertions(+)
+ create mode 100644 src/utils/upload/telegramResume.js
+
+diff --git a/src/components/upload/UploadForm.vue b/src/components/upload/UploadForm.vue
+index 1b4b882..15546dd 100644
+--- a/src/components/upload/UploadForm.vue
++++ b/src/components/upload/UploadForm.vue
+@@ -200,6 +200,7 @@ import * as imageConversion from 'image-conversion'
+ import { mapGetters } from 'vuex'
+ import { buildFileUrls, updateFileListUrls, getUrlByFormat } from '@/utils/upload/urlBuilder'
+ import { isUploadFormatError } from '@/utils/upload/fileFormat'
++import { uploadResumableTelegramFile } from '@/utils/upload/telegramResume'
+ import { computeSha256 } from '@/utils/upload/sha256'
+ import { expireQuery } from '@/utils/fileExpiry'
+ import { isAnimatedImage } from '@/utils/upload/animatedImage'
+@@ -710,6 +711,20 @@ methods: {
+         }
+ 
+         try {
++            if (uploadChannel === 'telegram') {
++                const params = new URLSearchParams({
++                    uploadChannel, uploadNameType, uploadFolder: targetUploadFolder
++                })
++                if (this.channelName) params.set('channelName', this.channelName)
++                const response = await uploadResumableTelegramFile(
++                    '/upload?' + params.toString() + expireQuery(this.expire),
++                    file.file, abortController.signal,
++                    percent => file.onProgress({ percent, file: file.file })
++                )
++                file.onSuccess(response, file.file)
++                return
++            }
++
+             // 第一步：初始化分块上传，获取uploadId
+             const initFormData = new FormData()
+             initFormData.append('originalFileName', file.file.name)
+diff --git a/src/utils/upload/telegramResume.js b/src/utils/upload/telegramResume.js
+new file mode 100644
+index 0000000..144669c
+--- /dev/null
++++ b/src/utils/upload/telegramResume.js
+@@ -0,0 +1,79 @@
++import axios from '@/utils/axios'
++import { computeSha256 } from './sha256'
++
++function uploadRequest(url, action, signal, data, id, index) {
++    const endpoint = new URL(url, window.location.origin)
++    endpoint.searchParams.set('telegramResume', action)
++    if (id) endpoint.searchParams.set('uploadId', id)
++    if (index !== undefined) endpoint.searchParams.set('index', index)
++    return axios({
++        url: endpoint.pathname + endpoint.search,
++        method: action === 'status' ? 'get' : 'post',
++        data,
++        signal,
++        withAuthCode: true
++    })
++}
++
++async function uploadPart(url, signal, data, id, index) {
++    for (let attempt = 0; ; attempt++) {
++        try {
++            await uploadRequest(url, 'part', signal, data, id, index)
++            return
++        } catch (error) {
++            const status = error.response?.status
++            if (signal.aborted || attempt >= 3 || (status && status < 500 && status !== 429)) throw error
++            const retryAfter = Number(error.response?.headers?.['retry-after']) || 0
++            await new Promise(resolve => setTimeout(resolve, 1000 * Math.max(retryAfter, 2 ** attempt)))
++            signal.throwIfAborted()
++        }
++    }
++}
++
++export async function uploadResumableTelegramFile(url, file, signal, onProgress) {
++    const fingerprint = await computeSha256(file)
++    signal.throwIfAborted()
++    const key = 'telegramResume:' + JSON.stringify([url, file.name, file.size, file.type, fingerprint])
++    const saved = JSON.parse(localStorage.getItem(key) || 'null')
++    let session
++    let id = saved?.id
++
++    if (id && saved.expiresAt > Date.now()) {
++        try {
++            session = (await uploadRequest(url, 'status', signal, undefined, id)).data
++            if (session.fingerprint !== fingerprint) throw new Error('Upload fingerprint mismatch')
++        } catch (error) {
++            if (error.response?.status !== 410) throw error
++        }
++    }
++
++    if (!session) {
++        const form = new FormData()
++        form.append('originalFileName', file.name)
++        form.append('originalFileType', file.type)
++        form.append('size', String(file.size))
++        form.append('fingerprint', fingerprint)
++        session = (await uploadRequest(url, 'init', signal, form)).data
++        id = session.uploadId
++        localStorage.setItem(key, JSON.stringify({ id, expiresAt: session.expiresAt }))
++    }
++
++    const completed = new Set(session.completed || [])
++    const { chunkSize, totalChunks } = session
++    const sizeOf = index => Math.min(chunkSize, file.size - index * chunkSize)
++    let confirmed = [...completed].reduce((size, index) => size + sizeOf(index), 0)
++    const report = () => onProgress(Math.round(100 * confirmed / file.size))
++    report()
++
++    for (let index = 0; index < totalChunks; index++) {
++        if (completed.has(index)) continue
++        const start = index * chunkSize
++        await uploadPart(url, signal, file.slice(start, start + sizeOf(index), 'application/octet-stream'), id, index)
++        confirmed += sizeOf(index)
++        report()
++    }
++
++    const response = await uploadRequest(url, 'complete', signal, undefined, id)
++    localStorage.removeItem(key)
++    return response
++}
+-- 
+2.52.0
+

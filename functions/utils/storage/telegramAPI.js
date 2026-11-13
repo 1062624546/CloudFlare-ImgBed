@@ -22,7 +22,7 @@ export class TelegramAPI {
      * @param {string} functionType - 文件类型参数名（如：photo, document等）
      * @returns {Promise<Object>} API响应结果
      */
-    async sendFile(file, chatId, functionName, functionType, caption = '', fileName = '') {
+    async sendFile(file, chatId, functionName, functionType, caption = '', fileName = '', { signal } = {}) {
         const formData = new FormData();
 
         formData.append('chat_id', chatId);
@@ -38,10 +38,11 @@ export class TelegramAPI {
         const response = await fetch(`${this.baseURL}/${functionName}`, {
             method: 'POST',
             headers: this.defaultHeaders,
-            body: formData
+            body: formData,
+            signal
         });
         console.log('Telegram API response:', response.status, response.statusText);
-        if (!response.ok) {
+        if (!response.ok && !(signal && response.status === 429)) {
             throw new Error(`Telegram API error: ${response.statusText}`);
         }
 

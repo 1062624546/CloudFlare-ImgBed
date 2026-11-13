@@ -426,7 +426,7 @@ export async function isBlockedUploadIp(env, uploadIp) {
 }
 
 // 构建唯一文件ID
-export async function buildUniqueFileId(context, fileName, fileType = 'application/octet-stream') {
+export async function buildUniqueFileId(context, fileName, fileType = 'application/octet-stream', uniqueSuffix = '') {
     const { env, url } = context;
     const db = getDatabase(env);
 
@@ -439,6 +439,13 @@ export async function buildUniqueFileId(context, fileName, fileType = 'applicati
 
     // 处理文件名，移除特殊字符
     fileName = sanitizeFileName(fileName);
+
+    if (uniqueSuffix) {
+        const name = ['short', 'index'].includes(nameType)
+            ? `${uniqueSuffix}.${fileExt}`
+            : `${uniqueSuffix}_${fileName}`;
+        return normalizedFolder ? `${normalizedFolder}/${name}` : name;
+    }
 
     const unique_index = Date.now() + Math.floor(Math.random() * 10000);
     let baseId = '';
